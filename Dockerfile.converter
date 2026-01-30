@@ -1,0 +1,43 @@
+# Build stage
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Copy module files and source code
+COPY deploy/converter/ ./
+
+# Ensure dependencies (and go.sum) are resolved
+RUN go mod tidy
+
+# Build binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o converter .
+
+# Runtime stage
+FROM alpine:3.22
+
+WORKDIR /app
+
+# Install CA certificates for HTTPS
+RUN apk add --no-cache ca-certificates tzdata
+
+# Copy binary from builder
+COPY --from=builder /app/converter .
+
+# Set timezone
+ENV TZ=UTC
+
+# Create temp directory for conversions
+RUN mkdir -p /tmp/conversions && chmod 777 /tmp/conversions
+
+# Run as non-root user
+RUN adduser -D -u 1000 converter && \
+    chown -R converter:converter /app /tmp/conversions
+USER converter
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD ps aux | grep converter || exit 1
+
+CMD ["./converter"]
